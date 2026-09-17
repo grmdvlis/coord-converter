@@ -28,7 +28,7 @@
     padding: 20px;
   }
   .container {
-    max-width: 1000px;
+    max-width: 1250px;
     margin: 0 auto;
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -53,6 +53,61 @@
     color: var(--text-dim);
     font-size: 13px;
     margin-top: 4px;
+  }
+
+  .search-bar {
+    grid-column: 1 / -1;
+    position: relative;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .search-bar input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    padding: 12px 14px;
+    outline: none;
+  }
+  .search-bar input:focus { border-color: var(--accent); }
+  .search-bar input::placeholder { color: #4a5a6d; }
+  .search-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    overflow: hidden;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+  }
+  .search-results.show { display: block; }
+  .search-results .item {
+    padding: 11px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .search-results .item:last-child { border-bottom: none; }
+  .search-results .item:hover { background: var(--panel-2); }
+  .search-results .item .coord {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .search-results .msg {
+    padding: 11px 14px;
+    font-size: 13px;
+    color: var(--text-dim);
   }
 
   .card {
@@ -162,8 +217,8 @@
   .tab-panel.active { display: block; }
 
   #map {
-    height: 100%;
-    min-height: 380px;
+    width: 100%;
+    aspect-ratio: 1 / 1;
     border-radius: 12px;
     border: 1px solid var(--border);
   }
@@ -192,6 +247,13 @@
     <h1><span class="globe">◎</span> 좌표 변환기</h1>
     <p>DMS ↔ 십진도 · WGS84 ↔ UTM · 한국 중부원점(TM) 변환과 지도 표시</p>
   </header>
+
+  <!-- Search bar -->
+  <div class="search-bar" id="search-bar">
+    <input type="text" id="search-input" placeholder="🔍 주소나 지명 검색 (예: 해남읍, 서울시청, 전남 해남군 ...)">
+    <button class="btn" id="search-btn" style="width:auto; white-space:nowrap;">검색</button>
+    <div class="search-results" id="search-results"></div>
+  </div>
 
   <!-- LEFT: converters -->
   <div class="card">
@@ -251,11 +313,15 @@
         </select>
       </div>
       <div class="field">
-        <label>입력 좌표 (X/경도, Y/위도 순서)</label>
+        <label style="display:flex; justify-content:space-between; align-items:center;">
+          <span>입력 좌표</span>
+          <button id="load-from-dms" style="background:none; border:none; color:var(--accent); font-family:inherit; font-size:11px; cursor:pointer; padding:0;">↩ DMS탭 경위도 불러오기</button>
+        </label>
         <div class="row">
           <input type="number" id="proj-x" placeholder="X 또는 경도" step="any">
           <input type="number" id="proj-y" placeholder="Y 또는 위도" step="any">
         </div>
+        <div id="proj-input-hint" style="font-size:11px; color:var(--text-dim); margin-top:5px;"></div>
       </div>
       <button class="btn" id="proj-convert">변환하기</button>
       <div class="error-msg" id="proj-error"></div>
@@ -263,12 +329,12 @@
       <div style="margin-top:14px;">
         <div class="result-block">
           <button class="copy" data-copy="proj-out-x">복사</button>
-          <div class="rlabel">X / 경도</div>
+          <div class="rlabel" id="proj-label-x">결과</div>
           <div class="rvalue" id="proj-out-x">-</div>
         </div>
         <div class="result-block">
           <button class="copy" data-copy="proj-out-y">복사</button>
-          <div class="rlabel">Y / 위도</div>
+          <div class="rlabel" id="proj-label-y">결과</div>
           <div class="rvalue" id="proj-out-y">-</div>
         </div>
       </div>
@@ -307,10 +373,26 @@
 
   // ---- Map setup ----
   const map = L.map('map').setView([36.5, 127.8], 7);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // VWorld(국토지리정보원) 일반지도 — 키 없는 공개 타일
+  const vworldLayer = L.tileLayer('https://xdworld.vworld.kr/2d/Base/service/{z}/{x}/{y}.png', {
+    attribution: '© VWorld (국토지리정보원)',
+    maxZoom: 18
+  });
+  // 대체 타일 (VWorld 로드 실패 시)
+  const fallbackLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap',
     maxZoom: 19
-  }).addTo(map);
+  });
+
+  let vworldFailed = false;
+  vworldLayer.on('tileerror', function() {
+    if (!vworldFailed) {
+      vworldFailed = true;
+      map.removeLayer(vworldLayer);
+      fallbackLayer.addTo(map);
+    }
+  });
+  vworldLayer.addTo(map);
   let marker = null;
 
   function showOnMap(lat, lng, label) {
@@ -321,6 +403,66 @@
     map.setView([lat, lng], 13);
     setTimeout(() => map.invalidateSize(), 100);
   }
+
+  // ---- Address search (Nominatim geocoding) ----
+  const searchInput = document.getElementById('search-input');
+  const searchBtn = document.getElementById('search-btn');
+  const searchResults = document.getElementById('search-results');
+
+  function renderSearchMessage(msg) {
+    searchResults.innerHTML = `<div class="msg">${msg}</div>`;
+    searchResults.classList.add('show');
+  }
+
+  async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) return;
+    renderSearchMessage('검색 중…');
+    try {
+      const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=ko&q=' + encodeURIComponent(q);
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('network');
+      const data = await res.json();
+      if (!data || data.length === 0) {
+        renderSearchMessage('검색 결과가 없어요. 다른 키워드로 시도해보세요.');
+        return;
+      }
+      searchResults.innerHTML = '';
+      data.forEach(place => {
+        const lat = parseFloat(place.lat);
+        const lon = parseFloat(place.lon);
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.innerHTML = `<div>${place.display_name}</div>` +
+          `<div class="coord">위도 ${lat.toFixed(6)}, 경도 ${lon.toFixed(6)}</div>`;
+        item.addEventListener('click', () => {
+          // Fill DD fields
+          document.getElementById('dd-lat').value = lat.toFixed(6);
+          document.getElementById('dd-lng').value = lon.toFixed(6);
+          // Switch to DMS/DD tab so the user sees the filled values
+          document.querySelector('.tab-btn[data-tab="dms"]').click();
+          // Show on map
+          showOnMap(lat, lon, place.display_name.split(',')[0]);
+          searchResults.classList.remove('show');
+          searchInput.value = place.display_name.split(',')[0];
+        });
+        searchResults.appendChild(item);
+      });
+      searchResults.classList.add('show');
+    } catch (e) {
+      renderSearchMessage('검색에 실패했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
+  searchBtn.addEventListener('click', doSearch);
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('search-bar').contains(e.target)) {
+      searchResults.classList.remove('show');
+    }
+  });
 
   // ---- Tabs ----
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -403,6 +545,8 @@
   const projY = document.getElementById('proj-y');
   const projOutX = document.getElementById('proj-out-x');
   const projOutY = document.getElementById('proj-out-y');
+  const projLabelX = document.getElementById('proj-label-x');
+  const projLabelY = document.getElementById('proj-label-y');
   const projError = document.getElementById('proj-error');
   let lastWgs = null; // [lng, lat]
 
@@ -416,9 +560,21 @@
     try {
       // proj4 expects [x, y] = [lng, lat] for 4326
       const out = proj4(src, dst, [x, y]);
-      const outDigits = (toCrs.value === 'wgs84') ? 6 : 3;
-      projOutX.textContent = out[0].toFixed(outDigits);
-      projOutY.textContent = out[1].toFixed(outDigits);
+      const isDeg = (toCrs.value === 'wgs84');
+      const digits = isDeg ? 6 : 3;
+      if (isDeg) {
+        // out = [경도, 위도]
+        projLabelX.textContent = '경도 (Longitude, °)';
+        projLabelY.textContent = '위도 (Latitude, °)';
+        projOutX.textContent = out[0].toFixed(digits) + '°';
+        projOutY.textContent = out[1].toFixed(digits) + '°';
+      } else {
+        // out = [X=동거리, Y=북거리] (미터)
+        projLabelX.textContent = 'X · 동거리 (Easting, m)';
+        projLabelY.textContent = 'Y · 북거리 (Northing, m)';
+        projOutX.textContent = out[0].toFixed(digits) + ' m';
+        projOutY.textContent = out[1].toFixed(digits) + ' m';
+      }
       // also compute WGS84 for map
       const wgs = proj4(src, 'EPSG:4326', [x, y]);
       lastWgs = wgs; // [lng, lat]
@@ -431,9 +587,51 @@
 
   document.getElementById('proj-convert').addEventListener('click', doProjConvert);
 
+  // 원본 좌표계에 따라 입력칸 안내/placeholder 갱신
+  const projInputHint = document.getElementById('proj-input-hint');
+  function updateProjHint() {
+    if (fromCrs.value === 'wgs84') {
+      projX.placeholder = '경도 (예: 126.5990)';
+      projY.placeholder = '위도 (예: 34.5735)';
+      projInputHint.textContent = 'X칸=경도, Y칸=위도 (° 단위)';
+    } else {
+      projX.placeholder = 'X / 동거리 (m)';
+      projY.placeholder = 'Y / 북거리 (m)';
+      projInputHint.textContent = 'X칸=동거리, Y칸=북거리 (미터 단위)';
+    }
+  }
+  fromCrs.addEventListener('change', updateProjHint);
+  updateProjHint();
+
+  // 입력이 바뀌면 이전 변환 결과 무효화 (오래된 좌표로 지도 표시 방지)
+  [projX, projY, fromCrs, toCrs].forEach(el => {
+    el.addEventListener('input', () => { lastWgs = null; });
+    el.addEventListener('change', () => { lastWgs = null; });
+  });
+
+  // DMS탭의 십진도 경위도를 좌표계 변환 입력칸으로 불러오기
+  document.getElementById('load-from-dms').addEventListener('click', () => {
+    const la = parseFloat(ddLat.value);
+    const ln = parseFloat(ddLng.value);
+    projError.textContent = '';
+    if (isNaN(la) || isNaN(ln)) {
+      projError.textContent = 'DMS↔DD 탭에 먼저 경위도를 입력하세요.';
+      return;
+    }
+    // 불러올 때는 원본 좌표계를 WGS84로 맞춰줌 (경위도이므로)
+    fromCrs.value = 'wgs84';
+    updateProjHint();
+    projX.value = ln.toFixed(6);  // 경도 → X
+    projY.value = la.toFixed(6);  // 위도 → Y
+  });
+
   document.getElementById('proj-show-map').addEventListener('click', () => {
     const wgs = lastWgs || doProjConvert();
     if (!wgs) { projError.textContent = '먼저 변환을 실행하세요.'; return; }
+    if (wgs[1] < -90 || wgs[1] > 90 || wgs[0] < -180 || wgs[0] > 180) {
+      projError.textContent = '변환 결과가 지도 범위를 벗어났어요. X/Y 입력 순서(동거리·북거리)를 확인하세요.';
+      return;
+    }
     showOnMap(wgs[1], wgs[0], `경도 ${wgs[0].toFixed(6)}, 위도 ${wgs[1].toFixed(6)}`);
   });
 
@@ -441,7 +639,7 @@
   document.querySelectorAll('.copy').forEach(btn => {
     btn.addEventListener('click', () => {
       const el = document.getElementById(btn.dataset.copy);
-      const text = el.textContent;
+      const text = (el.textContent || '').replace(/[°m\s]/g, '').trim();
       if (text && text !== '-') {
         navigator.clipboard.writeText(text).then(() => {
           const old = btn.textContent;
