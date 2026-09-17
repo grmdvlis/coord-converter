@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>좌표 변환기</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0f1620;
+    --panel: #182230;
+    --panel-2: #1f2c3d;
+    --input-bg: #101a26;
+    --text: #e6eef7;
+    --text-dim: #7e93a8;
+    --accent: #38bdf8;
+    --accent-dim: #0e7490;
+    --border: #2a3a4d;
+    --good: #4ade80;
+    --danger: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Pretendard', -apple-system, 'Segoe UI', sans-serif;
+    line-height: 1.5;
+    padding: 20px;
+  }
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 800px) {
+    .container { grid-template-columns: 1fr; }
+  }
+  header {
+    grid-column: 1 / -1;
+    padding: 4px 2px 8px;
+  }
+  header h1 {
+    font-size: 24px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header h1 .globe { color: var(--accent); }
+  header p {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-top: 4px;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  .card h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 14px;
+    letter-spacing: 0.02em;
+  }
+
+  .field { margin-bottom: 14px; }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  .row { display: flex; gap: 8px; }
+  input, select {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: #4a5a6d; }
+
+  .btn {
+    background: var(--accent);
+    color: #041019;
+    border: none;
+    border-radius: 9px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 11px 16px;
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.15s ease;
+  }
+  .btn:hover { background: #7dd3fc; }
+  .btn.secondary {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn.secondary:hover { background: #26374b; }
+
+  .btn-row { display: flex; gap: 8px; margin-top: 6px; }
+
+  .result-block {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .result-block .rlabel {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .result-block .rvalue {
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    word-break: break-all;
+    color: var(--text);
+  }
+  .result-block .copy {
+    float: right;
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tabs button {
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 12px;
+    padding: 8px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .tabs button.active { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  #map {
+    height: 100%;
+    min-height: 380px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+  }
+  .map-card { display: flex; flex-direction: column; }
+  .map-card .card-body { flex: 1; }
+
+  .error-msg {
+    color: var(--danger);
+    font-size: 12px;
+    margin-top: 6px;
+    min-height: 14px;
+  }
+  .note {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 10px;
+    line-height: 1.6;
+  }
+  .leaflet-popup-content { font-family: inherit; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1><span class="globe">◎</span> 좌표 변환기</h1>
+    <p>DMS ↔ 십진도 · WGS84 ↔ UTM · 한국 중부원점(TM) 변환과 지도 표시</p>
+  </header>
+
+  <!-- LEFT: converters -->
+  <div class="card">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="dms">DMS ↔ DD</button>
+      <button class="tab-btn" data-tab="proj">좌표계 변환</button>
+    </div>
+
+    <!-- Tab 1: DMS <-> DD -->
+    <div class="tab-panel active" id="tab-dms">
+      <h2>도분초 ↔ 십진도</h2>
+      <div class="field">
+        <label>십진도 (Decimal Degrees)</label>
+        <div class="row">
+          <input type="number" id="dd-lat" placeholder="위도 예: 34.5735" step="any">
+          <input type="number" id="dd-lng" placeholder="경도 예: 126.5990" step="any">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="dd-to-dms">↓ DMS로 변환</button>
+        <button class="btn secondary" id="dms-to-dd">↑ DD로 변환</button>
+      </div>
+      <div class="field" style="margin-top:14px;">
+        <label>도분초 (D° M' S")</label>
+        <div class="row">
+          <input type="text" id="dms-lat" placeholder="위도 예: 34 34 24.6 N">
+          <input type="text" id="dms-lng" placeholder="경도 예: 126 35 56.4 E">
+        </div>
+      </div>
+      <div class="error-msg" id="dms-error"></div>
+      <button class="btn secondary" id="dms-show-map" style="margin-top:6px;">🗺 지도에 표시</button>
+      <div class="note">
+        입력 예시: <b>34 34 24.6 N</b> 또는 <b>34° 34' 24.6" N</b><br>
+        방향(N/S/E/W)이 없으면 양수로 처리됩니다.
+      </div>
+    </div>
+
+    <!-- Tab 2: projection -->
+    <div class="tab-panel" id="tab-proj">
+      <h2>좌표계 변환</h2>
+      <div class="field">
+        <label>원본 좌표계</label>
+        <select id="from-crs">
+          <option value="wgs84">WGS84 경위도 (EPSG:4326)</option>
+          <option value="utm52">UTM Zone 52N (EPSG:32652)</option>
+          <option value="utm51">UTM Zone 51N (EPSG:32651)</option>
+          <option value="tmmid">한국 중부원점 TM (EPSG:5186)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>대상 좌표계</label>
+        <select id="to-crs">
+          <option value="utm52">UTM Zone 52N (EPSG:32652)</option>
+          <option value="wgs84">WGS84 경위도 (EPSG:4326)</option>
+          <option value="utm51">UTM Zone 51N (EPSG:32651)</option>
+          <option value="tmmid">한국 중부원점 TM (EPSG:5186)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>입력 좌표 (X/경도, Y/위도 순서)</label>
+        <div class="row">
+          <input type="number" id="proj-x" placeholder="X 또는 경도" step="any">
+          <input type="number" id="proj-y" placeholder="Y 또는 위도" step="any">
+        </div>
+      </div>
+      <button class="btn" id="proj-convert">변환하기</button>
+      <div class="error-msg" id="proj-error"></div>
+
+      <div style="margin-top:14px;">
+        <div class="result-block">
+          <button class="copy" data-copy="proj-out-x">복사</button>
+          <div class="rlabel">X / 경도</div>
+          <div class="rvalue" id="proj-out-x">-</div>
+        </div>
+        <div class="result-block">
+          <button class="copy" data-copy="proj-out-y">복사</button>
+          <div class="rlabel">Y / 위도</div>
+          <div class="rvalue" id="proj-out-y">-</div>
+        </div>
+      </div>
+      <button class="btn secondary" id="proj-show-map" style="margin-top:6px;">🗺 지도에 표시</button>
+      <div class="note">
+        WGS84는 (경도, 위도) 순서로 입력하세요. UTM/TM은 (X=동거리, Y=북거리)입니다.<br>
+        한국 중부원점 TM은 EPSG:5186(중부, falseE 200000 / falseN 600000) 기준입니다.
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: map -->
+  <div class="card map-card">
+    <h2>지도</h2>
+    <div class="card-body">
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+<script>
+(function() {
+  // ---- proj4 definitions ----
+  proj4.defs('EPSG:32652', '+proj=utm +zone=52 +datum=WGS84 +units=m +no_defs');
+  proj4.defs('EPSG:32651', '+proj=utm +zone=51 +datum=WGS84 +units=m +no_defs');
+  proj4.defs('EPSG:5186', '+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs');
+
+  const crsMap = {
+    wgs84: 'EPSG:4326',
+    utm52: 'EPSG:32652',
+    utm51: 'EPSG:32651',
+    tmmid: 'EPSG:5186'
+  };
+
+  // ---- Map setup ----
+  const map = L.map('map').setView([36.5, 127.8], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 19
+  }).addTo(map);
+  let marker = null;
+
+  function showOnMap(lat, lng, label) {
+    if (isNaN(lat) || isNaN(lng)) return;
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat, lng]).addTo(map);
+    marker.bindPopup(label || `${lat.toFixed(6)}, ${lng.toFixed(6)}`).openPopup();
+    map.setView([lat, lng], 13);
+    setTimeout(() => map.invalidateSize(), 100);
+  }
+
+  // ---- Tabs ----
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      setTimeout(() => map.invalidateSize(), 100);
+    });
+  });
+
+  // ---- DMS <-> DD ----
+  function ddToDms(dd, isLat) {
+    const dir = dd >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
+    const abs = Math.abs(dd);
+    const d = Math.floor(abs);
+    const mFloat = (abs - d) * 60;
+    const m = Math.floor(mFloat);
+    const s = ((mFloat - m) * 60).toFixed(2);
+    return `${d}° ${m}' ${s}" ${dir}`;
+  }
+
+  function dmsToDd(str) {
+    if (!str || !str.trim()) return NaN;
+    let s = str.trim().toUpperCase();
+    let sign = 1;
+    if (/[SW]/.test(s)) sign = -1;
+    s = s.replace(/[NSEW]/g, ' ');
+    const parts = s.match(/-?\d+(\.\d+)?/g);
+    if (!parts || parts.length === 0) return NaN;
+    const deg = parseFloat(parts[0]) || 0;
+    const min = parseFloat(parts[1]) || 0;
+    const sec = parseFloat(parts[2]) || 0;
+    let val = Math.abs(deg) + min / 60 + sec / 3600;
+    if (deg < 0) sign = -1;
+    return sign * val;
+  }
+
+  const ddLat = document.getElementById('dd-lat');
+  const ddLng = document.getElementById('dd-lng');
+  const dmsLat = document.getElementById('dms-lat');
+  const dmsLng = document.getElementById('dms-lng');
+  const dmsError = document.getElementById('dms-error');
+
+  document.getElementById('dd-to-dms').addEventListener('click', () => {
+    dmsError.textContent = '';
+    const la = parseFloat(ddLat.value);
+    const ln = parseFloat(ddLng.value);
+    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = '십진도 위도/경도를 입력하세요.'; return; }
+    dmsLat.value = ddToDms(la, true);
+    dmsLng.value = ddToDms(ln, false);
+  });
+
+  document.getElementById('dms-to-dd').addEventListener('click', () => {
+    dmsError.textContent = '';
+    const la = dmsToDd(dmsLat.value);
+    const ln = dmsToDd(dmsLng.value);
+    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = 'DMS 형식을 확인하세요 (예: 34 34 24.6 N).'; return; }
+    ddLat.value = la.toFixed(6);
+    ddLng.value = ln.toFixed(6);
+  });
+
+  document.getElementById('dms-show-map').addEventListener('click', () => {
+    dmsError.textContent = '';
+    let la = parseFloat(ddLat.value);
+    let ln = parseFloat(ddLng.value);
+    if (isNaN(la) || isNaN(ln)) {
+      la = dmsToDd(dmsLat.value);
+      ln = dmsToDd(dmsLng.value);
+    }
+    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = '표시할 좌표가 없습니다.'; return; }
+    showOnMap(la, ln, `위도 ${la.toFixed(6)}, 경도 ${ln.toFixed(6)}`);
+  });
+
+  // ---- Projection convert ----
+  const fromCrs = document.getElementById('from-crs');
+  const toCrs = document.getElementById('to-crs');
+  const projX = document.getElementById('proj-x');
+  const projY = document.getElementById('proj-y');
+  const projOutX = document.getElementById('proj-out-x');
+  const projOutY = document.getElementById('proj-out-y');
+  const projError = document.getElementById('proj-error');
+  let lastWgs = null; // [lng, lat]
+
+  function doProjConvert() {
+    projError.textContent = '';
+    const x = parseFloat(projX.value);
+    const y = parseFloat(projY.value);
+    if (isNaN(x) || isNaN(y)) { projError.textContent = '입력 좌표를 확인하세요.'; return null; }
+    const src = crsMap[fromCrs.value];
+    const dst = crsMap[toCrs.value];
+    try {
+      // proj4 expects [x, y] = [lng, lat] for 4326
+      const out = proj4(src, dst, [x, y]);
+      const outDigits = (toCrs.value === 'wgs84') ? 6 : 3;
+      projOutX.textContent = out[0].toFixed(outDigits);
+      projOutY.textContent = out[1].toFixed(outDigits);
+      // also compute WGS84 for map
+      const wgs = proj4(src, 'EPSG:4326', [x, y]);
+      lastWgs = wgs; // [lng, lat]
+      return wgs;
+    } catch (e) {
+      projError.textContent = '변환 중 오류가 발생했습니다.';
+      return null;
+    }
+  }
+
+  document.getElementById('proj-convert').addEventListener('click', doProjConvert);
+
+  document.getElementById('proj-show-map').addEventListener('click', () => {
+    const wgs = lastWgs || doProjConvert();
+    if (!wgs) { projError.textContent = '먼저 변환을 실행하세요.'; return; }
+    showOnMap(wgs[1], wgs[0], `경도 ${wgs[0].toFixed(6)}, 위도 ${wgs[1].toFixed(6)}`);
+  });
+
+  // ---- Copy buttons ----
+  document.querySelectorAll('.copy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const el = document.getElementById(btn.dataset.copy);
+      const text = el.textContent;
+      if (text && text !== '-') {
+        navigator.clipboard.writeText(text).then(() => {
+          const old = btn.textContent;
+          btn.textContent = '복사됨!';
+          setTimeout(() => btn.textContent = old, 1200);
+        });
+      }
+    });
+  });
+
+  setTimeout(() => map.invalidateSize(), 200);
+})();
+</script>
+
+</body>
+</html>
