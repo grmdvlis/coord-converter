@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>좌표 변환기</title>
+<title>좌표 변환기 v3</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root {
@@ -238,13 +238,33 @@
     line-height: 1.6;
   }
   .leaflet-popup-content { font-family: inherit; font-size: 12px; }
+
+  .swap-btn {
+    width: 100%;
+    margin: -2px 0 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .swap-btn:hover { background: #26374b; }
+  .map-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 8px;
+    line-height: 1.5;
+  }
 </style>
 </head>
 <body>
 
 <div class="container">
   <header>
-    <h1><span class="globe">◎</span> 좌표 변환기</h1>
+    <h1><span class="globe">◎</span> 좌표 변환기 <span style="font-size:12px;color:var(--text-dim);font-weight:500;">v3</span></h1>
     <p>DMS ↔ 십진도 · WGS84 ↔ UTM · 한국 중부원점(TM) 변환과 지도 표시</p>
   </header>
 
@@ -312,6 +332,7 @@
           <option value="tmmid">한국 중부원점 TM (EPSG:5186)</option>
         </select>
       </div>
+      <button type="button" class="swap-btn" id="swap-crs">⇄ 원본/대상 좌표계 교환</button>
       <div class="field">
         <label style="display:flex; justify-content:space-between; align-items:center;">
           <span>입력 좌표</span>
@@ -340,8 +361,8 @@
       </div>
       <button class="btn secondary" id="proj-show-map" style="margin-top:6px;">🗺 지도에 표시</button>
       <div class="note">
-        WGS84는 (경도, 위도) 순서로 입력하세요. UTM/TM은 (X=동거리, Y=북거리)입니다.<br>
-        한국 중부원점 TM은 EPSG:5186(중부, falseE 200000 / falseN 600000) 기준입니다.
+        WGS84는 (경도, 위도) 순서로 입력하세요. 투영좌표는 (Easting, Northing) 순서입니다.<br>
+        EPSG:5186은 축 명칭 혼동을 줄이기 위해 X/Y 대신 Easting·Northing으로 표시합니다.
       </div>
     </div>
   </div>
@@ -351,6 +372,7 @@
     <h2>지도</h2>
     <div class="card-body">
       <div id="map"></div>
+      <div class="map-hint">지도를 클릭하면 해당 위치의 위도·경도와 DMS가 자동 입력됩니다.</div>
     </div>
   </div>
 </div>
@@ -416,7 +438,9 @@
 
   async function doSearch() {
     const q = searchInput.value.trim();
-    if (!q) return;
+    if (!q || searchBtn.disabled) return;
+    searchBtn.disabled = true;
+    searchBtn.textContent = '검색 중…';
     renderSearchMessage('검색 중…');
     try {
       const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=ko&q=' + encodeURIComponent(q);
@@ -433,15 +457,21 @@
         const lon = parseFloat(place.lon);
         const item = document.createElement('div');
         item.className = 'item';
-        item.innerHTML = `<div>${place.display_name}</div>` +
-          `<div class="coord">위도 ${lat.toFixed(6)}, 경도 ${lon.toFixed(6)}</div>`;
+
+        const nameEl = document.createElement('div');
+        nameEl.textContent = place.display_name;
+        const coordEl = document.createElement('div');
+        coordEl.className = 'coord';
+        coordEl.textContent = `위도 ${lat.toFixed(6)}, 경도 ${lon.toFixed(6)}`;
+        item.appendChild(nameEl);
+        item.appendChild(coordEl);
+
         item.addEventListener('click', () => {
-          // Fill DD fields
           document.getElementById('dd-lat').value = lat.toFixed(6);
           document.getElementById('dd-lng').value = lon.toFixed(6);
-          // Switch to DMS/DD tab so the user sees the filled values
+          document.getElementById('dms-lat').value = ddToDms(lat, true);
+          document.getElementById('dms-lng').value = ddToDms(lon, false);
           document.querySelector('.tab-btn[data-tab="dms"]').click();
-          // Show on map
           showOnMap(lat, lon, place.display_name.split(',')[0]);
           searchResults.classList.remove('show');
           searchInput.value = place.display_name.split(',')[0];
@@ -451,6 +481,9 @@
       searchResults.classList.add('show');
     } catch (e) {
       renderSearchMessage('검색에 실패했어요. 잠시 후 다시 시도해주세요.');
+    } finally {
+      searchBtn.disabled = false;
+      searchBtn.textContent = '검색';
     }
   }
 
@@ -475,6 +508,34 @@
     });
   });
 
+  function isValidLat(v) { return Number.isFinite(v) && v >= -90 && v <= 90; }
+  function isValidLng(v) { return Number.isFinite(v) && v >= -180 && v <= 180; }
+
+  function parseDmsStrict(str, isLat) {
+    if (!str || !str.trim()) return NaN;
+    const s0 = str.trim().toUpperCase();
+    const dirMatch = s0.match(/[NSEW]/);
+    const dir = dirMatch ? dirMatch[0] : '';
+    if (isLat && /[EW]/.test(dir)) return NaN;
+    if (!isLat && /[NS]/.test(dir)) return NaN;
+
+    const parts = s0.replace(/[NSEW]/g, ' ').match(/-?\d+(?:\.\d+)?/g);
+    if (!parts || parts.length === 0 || parts.length > 3) return NaN;
+
+    const deg = Number(parts[0]);
+    const min = parts[1] !== undefined ? Number(parts[1]) : 0;
+    const sec = parts[2] !== undefined ? Number(parts[2]) : 0;
+    if (![deg, min, sec].every(Number.isFinite)) return NaN;
+    if (min < 0 || min >= 60 || sec < 0 || sec >= 60) return NaN;
+
+    let sign = deg < 0 ? -1 : 1;
+    if (/[SW]/.test(dir)) sign = -1;
+    if (/[NE]/.test(dir)) sign = 1;
+
+    const val = sign * (Math.abs(deg) + min / 60 + sec / 3600);
+    return (isLat ? isValidLat(val) : isValidLng(val)) ? val : NaN;
+  }
+
   // ---- DMS <-> DD ----
   function ddToDms(dd, isLat) {
     const dir = dd >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
@@ -486,20 +547,8 @@
     return `${d}° ${m}' ${s}" ${dir}`;
   }
 
-  function dmsToDd(str) {
-    if (!str || !str.trim()) return NaN;
-    let s = str.trim().toUpperCase();
-    let sign = 1;
-    if (/[SW]/.test(s)) sign = -1;
-    s = s.replace(/[NSEW]/g, ' ');
-    const parts = s.match(/-?\d+(\.\d+)?/g);
-    if (!parts || parts.length === 0) return NaN;
-    const deg = parseFloat(parts[0]) || 0;
-    const min = parseFloat(parts[1]) || 0;
-    const sec = parseFloat(parts[2]) || 0;
-    let val = Math.abs(deg) + min / 60 + sec / 3600;
-    if (deg < 0) sign = -1;
-    return sign * val;
+  function dmsToDd(str, isLat) {
+    return parseDmsStrict(str, isLat);
   }
 
   const ddLat = document.getElementById('dd-lat');
@@ -512,16 +561,16 @@
     dmsError.textContent = '';
     const la = parseFloat(ddLat.value);
     const ln = parseFloat(ddLng.value);
-    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = '십진도 위도/경도를 입력하세요.'; return; }
+    if (!isValidLat(la) || !isValidLng(ln)) { dmsError.textContent = '위도는 -90~90°, 경도는 -180~180° 범위로 입력하세요.'; return; }
     dmsLat.value = ddToDms(la, true);
     dmsLng.value = ddToDms(ln, false);
   });
 
   document.getElementById('dms-to-dd').addEventListener('click', () => {
     dmsError.textContent = '';
-    const la = dmsToDd(dmsLat.value);
-    const ln = dmsToDd(dmsLng.value);
-    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = 'DMS 형식을 확인하세요 (예: 34 34 24.6 N).'; return; }
+    const la = dmsToDd(dmsLat.value, true);
+    const ln = dmsToDd(dmsLng.value, false);
+    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = 'DMS 형식과 범위를 확인하세요. 분/초는 0~60 미만이어야 합니다.'; return; }
     ddLat.value = la.toFixed(6);
     ddLng.value = ln.toFixed(6);
   });
@@ -531,10 +580,10 @@
     let la = parseFloat(ddLat.value);
     let ln = parseFloat(ddLng.value);
     if (isNaN(la) || isNaN(ln)) {
-      la = dmsToDd(dmsLat.value);
-      ln = dmsToDd(dmsLng.value);
+      la = dmsToDd(dmsLat.value, true);
+      ln = dmsToDd(dmsLng.value, false);
     }
-    if (isNaN(la) || isNaN(ln)) { dmsError.textContent = '표시할 좌표가 없습니다.'; return; }
+    if (!isValidLat(la) || !isValidLng(ln)) { dmsError.textContent = '표시할 수 있는 유효한 위도/경도가 없습니다.'; return; }
     showOnMap(la, ln, `위도 ${la.toFixed(6)}, 경도 ${ln.toFixed(6)}`);
   });
 
@@ -555,6 +604,10 @@
     const x = parseFloat(projX.value);
     const y = parseFloat(projY.value);
     if (isNaN(x) || isNaN(y)) { projError.textContent = '입력 좌표를 확인하세요.'; return null; }
+    if (fromCrs.value === 'wgs84' && (!isValidLng(x) || !isValidLat(y))) {
+      projError.textContent = 'WGS84는 경도 -180~180°, 위도 -90~90° 범위로 입력하세요.';
+      return null;
+    }
     const src = crsMap[fromCrs.value];
     const dst = crsMap[toCrs.value];
     try {
@@ -570,8 +623,8 @@
         projOutY.textContent = out[1].toFixed(digits) + '°';
       } else {
         // out = [X=동거리, Y=북거리] (미터)
-        projLabelX.textContent = 'X · 동거리 (Easting, m)';
-        projLabelY.textContent = 'Y · 북거리 (Northing, m)';
+        projLabelX.textContent = 'Easting · 동거리 (m)';
+        projLabelY.textContent = 'Northing · 북거리 (m)';
         projOutX.textContent = out[0].toFixed(digits) + ' m';
         projOutY.textContent = out[1].toFixed(digits) + ' m';
       }
@@ -595,13 +648,32 @@
       projY.placeholder = '위도 (예: 34.5735)';
       projInputHint.textContent = 'X칸=경도, Y칸=위도 (° 단위)';
     } else {
-      projX.placeholder = 'X / 동거리 (m)';
-      projY.placeholder = 'Y / 북거리 (m)';
-      projInputHint.textContent = 'X칸=동거리, Y칸=북거리 (미터 단위)';
+      projX.placeholder = 'Easting / 동거리 (m)';
+      projY.placeholder = 'Northing / 북거리 (m)';
+      projInputHint.textContent = '첫 칸=Easting(동거리), 둘째 칸=Northing(북거리), 미터 단위';
     }
   }
   fromCrs.addEventListener('change', updateProjHint);
   updateProjHint();
+
+
+  document.getElementById('swap-crs').addEventListener('click', () => {
+    const oldFrom = fromCrs.value;
+    fromCrs.value = toCrs.value;
+    toCrs.value = oldFrom;
+
+    const outXText = projOutX.textContent;
+    const outYText = projOutY.textContent;
+    const outX = parseFloat(outXText);
+    const outY = parseFloat(outYText);
+    if (Number.isFinite(outX) && Number.isFinite(outY) && outXText !== '-' && outYText !== '-') {
+      projX.value = outX;
+      projY.value = outY;
+    }
+    lastWgs = null;
+    updateProjHint();
+    projError.textContent = '';
+  });
 
   // 입력이 바뀌면 이전 변환 결과 무효화 (오래된 좌표로 지도 표시 방지)
   [projX, projY, fromCrs, toCrs].forEach(el => {
@@ -633,6 +705,18 @@
       return;
     }
     showOnMap(wgs[1], wgs[0], `경도 ${wgs[0].toFixed(6)}, 위도 ${wgs[1].toFixed(6)}`);
+  });
+
+
+  map.on('click', (e) => {
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+    ddLat.value = lat.toFixed(6);
+    ddLng.value = lng.toFixed(6);
+    dmsLat.value = ddToDms(lat, true);
+    dmsLng.value = ddToDms(lng, false);
+    document.querySelector('.tab-btn[data-tab="dms"]').click();
+    showOnMap(lat, lng, `위도 ${lat.toFixed(6)}, 경도 ${lng.toFixed(6)}`);
   });
 
   // ---- Copy buttons ----
